@@ -6,6 +6,7 @@ import { HeaderAnnouncer, useAnnounce, useAnnouncedStatusChange } from './Header
 import type { StatusAction, StatusChangeAction } from './StatusActionForm';
 
 const CLOSED = 'Closed. People can’t sign up now.';
+const REOPENED = 'Reopened. People can sign up again.';
 
 /** Runs a status change the way the header's Close signup does, through the hook. */
 function ChangeButton({ action, to }: { action: StatusChangeAction; to: SignupStatus }) {
@@ -99,10 +100,40 @@ describe('HeaderAnnouncer', () => {
     expect(button).toHaveFocus();
   });
 
+  it('says the signup reopened when this page’s Reopen signup reopened it, and focuses the title on screen', async () => {
+    const { show, press } = renderHeader(async () => null, 'closed', 'open');
+    await press();
+    show('open');
+    expect(screen.getByRole('status')).toHaveTextContent(REOPENED);
+    await tick();
+    expect(screen.getByTestId('computer-title')).toHaveFocus();
+  });
+
+  it('says nothing and leaves focus alone when the signup was reopened some other way', async () => {
+    const { show, button } = renderHeader(async () => null, 'closed', 'open');
+    act(() => button.focus());
+    show('open');
+    await tick();
+    expect(screen.getByRole('status')).toHaveTextContent('');
+    expect(button).toHaveFocus();
+  });
+
+  it('says nothing after a refused reopen, when the signup reopens later some other way', async () => {
+    const { show, press, button } = renderHeader(
+      async () => ({ error: 'You don’t have edit access.' }),
+      'closed',
+      'open',
+    );
+    await press();
+    show('open');
+    await tick();
+    expect(screen.getByRole('status')).toHaveTextContent('');
+    expect(button).toHaveFocus();
+  });
+
   // The status it asked for, but from a status the header has no words for
-  // a change from: it goes by both. The draft-to-open row guards that once the
-  // table has words for reaching open from a closed signup; until then it
-  // would pass keyed on the new status alone.
+  // a change from: it goes by both. The draft-to-open row is what keeps
+  // reaching open from a draft from saying "Reopened".
   it.each<[string, SignupStatus]>([
     ['a draft opened through the hook', 'open'],
     ['a draft closed through the hook', 'closed'],
