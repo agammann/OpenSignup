@@ -9,13 +9,17 @@ import {
   type CloseQuestionAction,
 } from './CloseSignupConfirm';
 import { OUTLINED } from './header-buttons';
-import { useAnnouncedClose } from './HeaderAnnouncer';
-import { StatusActionScope, useStatusActionPending, type StatusAction } from './StatusActionForm';
+import { useAnnouncedStatusChange } from './HeaderAnnouncer';
+import {
+  StatusActionScope,
+  useStatusActionPending,
+  type StatusChangeAction,
+} from './StatusActionForm';
 
 interface MoreActionsMenuProps {
   closeQuestion: string;
   closeQuestionAction: CloseQuestionAction;
-  closeAction: StatusAction;
+  closeAction: StatusChangeAction;
 }
 
 /**
@@ -28,7 +32,7 @@ export function MoreActionsMenu({
   closeQuestionAction,
   closeAction,
 }: MoreActionsMenuProps) {
-  const closeSignup = useAnnouncedClose(closeAction);
+  const closeSignup = useAnnouncedStatusChange(closeAction, 'closed');
   return (
     <StatusActionScope action={closeSignup}>
       <Menu closeQuestion={closeQuestion} closeQuestionAction={closeQuestionAction} />
