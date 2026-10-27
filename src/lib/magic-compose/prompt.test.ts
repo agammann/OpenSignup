@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { RULES_IN_BOTH } from '@/lib/signup-rules';
 import { SignupCreateInputSchema } from '@/schemas/signups';
 import { SlotFieldInputSchema } from '@/schemas/slot-fields';
+import { buildFollowUpMessages } from './follow-up';
+import { WHAT_OPTION_MAX_LENGTH, WHAT_OPTIONS_MAX, WHAT_OPTIONS_MIN } from './limits';
 import {
   DraftFieldSchema,
   FullDraftSchema,
@@ -15,6 +17,7 @@ import {
   buildMessages,
   isQuestionsReply,
 } from './prompt';
+import { QUESTION_TOPICS } from './questions';
 
 describe('system prompt', () => {
   const sys = buildMessages('x')[0]!.content;
@@ -55,6 +58,108 @@ describe('system prompt', () => {
 
   it('carries every rule it shares with the MCP server instructions, word for word', () => {
     for (const rule of RULES_IN_BOTH) expect(sys).toContain(rule);
+  });
+
+  it('describes the questions reply with the limits QuestionsSchema checks', () => {
+    expect(sys).toContain('{ "questions": { "topics": [');
+    for (const topic of QUESTION_TOPICS) expect(sys).toContain(`"${topic}"`);
+    expect(sys).toContain(
+      `${WHAT_OPTIONS_MIN} to ${WHAT_OPTIONS_MAX} kinds of thing people could sign up for, in the prompt's language, each at most ${WHAT_OPTION_MAX_LENGTH} characters.`,
+    );
+    expect(sys).toContain('Never a date, a time or a count');
+  });
+
+  // follow-up.ts words the second call's message; these hold the prompt to its words.
+  const followUp = buildFollowUpMessages('Bake sale', {
+    what: { picked: ['Staff the table'], added: [] },
+    howMany: [null],
+  })[1]!.content;
+
+  it('never answers a message carrying answers with questions, by the label they come under', () => {
+    const label = followUp.split('\n').find((l) => l.startsWith('Answers to'));
+    expect(label).toBe('Answers to your questions:');
+    expect(sys).toContain(`"${label}" is never answered with questions.`);
+  });
+
+  it('reads "no limit", as an answer puts it, as a null capacity, and nothing else', () => {
+    expect(followUp).toContain('"Staff the table": no limit');
+    expect(sys).toContain(
+      `"capacity": <integer, 1 by default; null only if the prompt or answers say there's no limit>`,
+    );
+    expect(sys).toContain(
+      'No limit ("unlimited", "as many as want") means null; never null as a guess.',
+    );
+  });
+
+  // Each worked example's OUTPUT is a reply the server would take as it stands.
+  const examples = [
+    ...sys.matchAll(/^Example ([A-Z]) — [^\n]*\n\nUSER: "([^"]*)"\n\nOUTPUT:\n(\{[\s\S]*?\n\})$/gm),
+  ].map(([, name, user, output]) => ({ name, user, reply: JSON.parse(output!) as unknown }));
+
+  it('has worked examples A to E, each a reply MagicComposeDraftSchema takes', () => {
+    expect(examples.map((e) => e.name)).toEqual(['A', 'B', 'C', 'D', 'E']);
+    for (const e of examples) expect(MagicComposeDraftSchema.safeParse(e.reply).success).toBe(true);
+  });
+
+  // ev_008 was Example C word for word, and ev_034 held rule 4's "e.g.", so each scored
+  // recall of the prompt's own words, not the rules.
+  it("has no worked example or e.g. whose words are, or hold, an eval case's", () => {
+    const file = path.join(__dirname, '../../../evals/magic-compose/dev-evals.json');
+    const { cases } = JSON.parse(readFileSync(file, 'utf8')) as {
+      cases: { id: string; prompt: string }[];
+    };
+    // Whole words only, with a space either side, so "art" doesn't match inside "party".
+    const words = (s: string) =>
+      ` ${s
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()} `;
+    const system = buildMessages('x')[0]!.content;
+    const quoted = [...system.matchAll(/e\.g\. "([^"]+)"/g)].map((m) => m[1]!);
+    expect(quoted.length).toBeGreaterThan(0);
+    const texts = [
+      ...examples.map((e) => ({ name: `Example ${e.name}`, text: e.user! })),
+      ...quoted.map((q) => ({ name: `e.g. "${q}"`, text: q })),
+    ];
+    for (const t of texts) {
+      const own = words(t.text);
+      for (const c of cases) {
+        const prompt = words(c.prompt);
+        // A prompt with no Latin letters or digits (ev_014's empty one) has nothing to compare.
+        if (prompt.trim() === '') continue;
+        expect(own.includes(prompt) || prompt.includes(own), `${t.name} vs ${c.id}`).toBe(false);
+      }
+    }
+  });
+
+  it('asks about the vague soccer prompt in Example C', () => {
+    const c = examples.find((e) => e.name === 'C')!;
+    expect(c.user).toBe("Make a signup for my kid's soccer team");
+    expect(QuestionsSchema.parse(c.reply).questions.topics).toEqual(['what', 'when', 'how_many']);
+  });
+
+  it('drafts placeholder performances in Example D, which says what but not when', () => {
+    const d = examples.find((e) => e.name === 'D')!;
+    const draft = FullDraftSchema.parse(d.reply);
+    expect(draft.slots.map((s) => s.values.performance)).toEqual([
+      'TBD: performance 1',
+      'TBD: performance 2',
+      'TBD: performance 3',
+    ]);
+    expect(draft.slots.every((s) => s.capacity === 2)).toBe(true);
+  });
+
+  it('drafts the item list in Example E as it stands: no date field, no placeholders, capacity 1', () => {
+    const e = examples.find((x) => x.name === 'E')!;
+    const draft = FullDraftSchema.parse(e.reply);
+    expect(draft.fields.map((f) => f.fieldType)).toEqual(['text']);
+    expect(draft.slots.map((s) => s.values.item)).toEqual([
+      'Canopy tent',
+      'Camp stove',
+      'Cooler',
+      'Lantern',
+    ]);
+    expect(draft.slots.every((s) => s.capacity === 1)).toBe(true);
   });
 });
 
