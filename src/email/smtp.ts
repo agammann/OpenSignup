@@ -24,10 +24,10 @@ export interface SmtpConfig {
 // A mail host that is down or firewalled has to fail in seconds, within the
 // sign-in request's 30 s limit (src/auth/magic-link-send.ts). In nodemailer
 // 10.1, one 10 s connection deadline covers DNS, every address tried, TCP,
-// TLS, the greeting and STARTTLS. The DNS lookup uses the smaller of these
-// two limits. Leave the later send timeout at nodemailer's default: a reminder
-// that times out after the relay took it is retried, and the participant gets
-// it twice.
+// TLS, the greeting and STARTTLS. The DNS lookup uses the smaller of dnsTimeout
+// and connectionTimeout. Leave socketTimeout at nodemailer's default (10
+// minutes): a reminder that times out after the relay took it is retried, and
+// the participant gets it twice.
 const SMTP_DNS_TIMEOUT_MS = 10_000;
 const SMTP_CONNECTION_TIMEOUT_MS = 10_000;
 

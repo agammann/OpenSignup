@@ -36,7 +36,7 @@ describe('smtpTransportOptions', () => {
     expect(options.connectionTimeout).toBeLessThanOrEqual(10_000);
   });
 
-  it("leaves message transfer timing to nodemailer's defaults", () => {
+  it('sets no greeting or socket timeout of its own', () => {
     // A send that times out after the relay accepted it is retried, so a tight
     // socket limit here would turn a slow relay into duplicate reminders.
     const options = smtpTransportOptions(cfg);
