@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { WHAT_ITEMS_MAX } from '@/lib/magic-compose/limits';
 import type { MagicComposeQuestions } from '@/lib/magic-compose/questions';
@@ -9,8 +9,14 @@ import { MagicComposeRoot } from './MagicComposeRoot';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
+// Drafting from the answers starts at the top of the page; jsdom has no scrolling.
+beforeEach(() => {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+});
+
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -128,6 +134,22 @@ describe('<MagicComposeRoot /> questions', () => {
     expect(screen.getByRole('radiogroup', { name: 'When is it?' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'One day' })).toBeChecked();
     expect(screen.getByText('Pick or add something above first.')).toBeInTheDocument();
+  });
+
+  it('shows the questions as the step after reading, with Back ahead of everything', async () => {
+    stubReplies(asks());
+    const heading = await openQuestions();
+    // The list and the phone's one-line version both mark it; CSS shows one.
+    const current = screen.getAllByText('A few details').map((label) => label.closest('li'));
+    expect(current.length).toBeGreaterThan(0);
+    for (const step of current) expect(step).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText('Reading your description').closest('li')).not.toHaveAttribute(
+      'aria-current',
+    );
+    expect(screen.getByText('Your answers')).toBeInTheDocument();
+    // First in the page, so Shift+Tab from the heading reaches it, and a phone shows it top left.
+    const back = screen.getByRole('button', { name: 'Back' });
+    expect(back.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows only the questions that were asked', async () => {
