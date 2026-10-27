@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MagicComposeRoot, explainFetchError } from './MagicComposeRoot';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -10,6 +10,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function stubFetch(status: number, body: unknown) {
@@ -71,12 +72,35 @@ describe('<MagicComposeRoot /> errors', () => {
     expect(alert).not.toHaveTextContent(/30s/);
   });
 
-  it('keeps the description after an error', async () => {
+  it("keeps the description, and the route's advice, after a first call times out", async () => {
     stubFetch(500, {
-      error: { code: 'internal', message: 'AI drafting timed out. Try a simpler prompt.' },
+      error: {
+        code: 'internal',
+        message: 'AI drafting timed out. Try a simpler prompt.',
+        details: { llmErrorCode: 'timeout' },
+      },
     });
     expect(await draft('Bake sale')).toHaveTextContent(
       'AI drafting timed out. Try a simpler prompt.',
+    );
+    expect(screen.getByRole('textbox')).toHaveValue('Bake sale');
+  });
+
+  it('suggests a simpler prompt when a first call runs too long', () => {
+    // A reply that never comes.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    render(<MagicComposeRoot />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Bake sale' } });
+    fireEvent.click(screen.getByRole('button', { name: /Draft my signup/ }));
+    act(() => {
+      vi.advanceTimersByTime(210_000);
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'AI drafting is taking longer than expected. Try again or simplify your prompt.',
     );
     expect(screen.getByRole('textbox')).toHaveValue('Bake sale');
   });
