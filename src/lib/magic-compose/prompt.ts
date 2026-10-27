@@ -17,6 +17,8 @@ import {
   USE_CAPACITY_NOT_DUPLICATE_ROWS,
   neverInventRule,
 } from '@/lib/signup-rules';
+import { WHAT_OPTION_MAX_LENGTH, WHAT_OPTIONS_MAX, WHAT_OPTIONS_MIN } from './limits';
+import { QUESTION_TOPICS, tidyText, type MagicComposeQuestions } from './questions';
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -66,10 +68,111 @@ const RefusalSchema = z.object({
   refusalReason: z.string().min(1).max(500),
 });
 
-export const MagicComposeDraftSchema = z.union([RefusalSchema, FullDraftSchema]);
+/**
+ * The topics the page can ask about, each once. A model that adds one the page
+ * doesn't know ("where") has still asked the ones it does.
+ */
+function knownTopics(topics: string[]): string[] {
+  const known: readonly string[] = QUESTION_TOPICS;
+  return [...new Set(topics.filter((t) => known.includes(t)))];
+}
+
+/**
+ * The options the page offers: each once, case aside, none blank or over
+ * `WHAT_OPTION_MAX_LENGTH`, and the first `WHAT_OPTIONS_MAX` of those. A model
+ * that offers five, one twice, or one too long has still asked a question the
+ * page can show.
+ */
+function firstDistinctOptions(options: string[]): string[] {
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const option of options) {
+    if (kept.length === WHAT_OPTIONS_MAX) break;
+    const key = option.toLowerCase();
+    if (option.length === 0 || option.length > WHAT_OPTION_MAX_LENGTH || seen.has(key)) continue;
+    seen.add(key);
+    kept.push(option);
+  }
+  return kept;
+}
+
+/**
+ * The model's answer when the description doesn't say what people sign up
+ * for: which topics are missing, and a few options for "what". Strict at both
+ * levels, because `z.object` drops keys it doesn't know: a reply mixing
+ * questions with half a draft must fail, not pass as whichever arm fits. The
+ * topics and options are cut to the ones the page can show before they're
+ * checked, so only those have to be right.
+ */
+export const QuestionsSchema = z
+  .object({
+    questions: z
+      .object({
+        topics: z
+          .array(z.string())
+          .transform(knownTopics)
+          .pipe(
+            z
+              .array(z.enum(QUESTION_TOPICS))
+              .refine((t) => t.includes('what'), 'questions always ask what people sign up for'),
+          ),
+        whatOptions: z
+          .array(z.string().transform(tidyText))
+          .transform(firstDistinctOptions)
+          .pipe(z.array(z.string()).min(WHAT_OPTIONS_MIN)),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
+ * The reply without its null top-level keys. Models in json_object mode often
+ * send null for a key they don't use (as `choices` and `groupBy` already
+ * allow), so a draft with `"questions": null` is a draft, and questions with
+ * `"refusalReason": null` are questions.
+ */
+function withoutNullKeys(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== null));
+}
+
+/**
+ * A refusal still wins, as it always has (`RefusalSchema` isn't strict). A
+ * reply carrying `questions` is a questions reply and nothing else, so the
+ * draft arm refuses that key; `FullDraftSchema` itself stays as it is, since
+ * the MCP `create_signup` tool validates with it.
+ */
+export const MagicComposeDraftSchema = z.preprocess(
+  withoutNullKeys,
+  z.union([RefusalSchema, QuestionsSchema, FullDraftSchema.extend({ questions: z.undefined() })]),
+);
 
 export type MagicComposeDraft = z.infer<typeof FullDraftSchema>;
 export type MagicComposeParsed = z.infer<typeof MagicComposeDraftSchema>;
+
+/**
+ * Whether a raw reply asks questions, in any shape, read as
+ * `MagicComposeDraftSchema` reads it (null keys dropped, a refusal winning).
+ * After the answers, a model that asks again most likely asks about less than
+ * the first time (only "when", say, with no options), which `QuestionsSchema`
+ * would reject as malformed and the organizer would see as a broken draft. A
+ * first call's questions that `QuestionsSchema` rejects (no "what", one
+ * option) are caught the same way.
+ */
+export function asksQuestions(value: unknown): boolean {
+  const reply = withoutNullKeys(value);
+  return (
+    typeof reply === 'object' &&
+    reply !== null &&
+    'questions' in reply &&
+    !('refusalReason' in reply)
+  );
+}
+
+/** A parsed reply that asks questions instead of drafting. */
+export function isQuestionsReply(p: MagicComposeParsed): p is { questions: MagicComposeQuestions } {
+  return 'questions' in p && p.questions !== undefined;
+}
 
 const SYSTEM_PROMPT = `You are OpenSignup's signup drafter. OpenSignup is a coordination tool where organizers create signups containing slots, and participants commit to slots without ever creating an account.
 
